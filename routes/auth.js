@@ -83,7 +83,7 @@ router.post('/login', async (req, res) => {
         }
 
         const cleanUsername = username.trim();
-        const user = await User.findOne({ username: cleanUsername });
+        const user = await User.findOne({ username: { $regex: new RegExp(`^${cleanUsername}$`, 'i') } });
         if (!user) {
             return res.status(401).json({ error: 'Identifiants invalides.' });
         }
