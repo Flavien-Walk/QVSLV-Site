@@ -20,20 +20,31 @@ const logRequest = (req, res, next) => {
     next();
 };
 
-// Configuration CORS pour Render
+// Configuration CORS CORRIGÉE pour inclure Vercel
 app.use(cors({
     origin: [
         'https://qvslv-site.onrender.com',
+        'https://qvslv-site-front.vercel.app', // Ajout de votre domaine Vercel
         'http://localhost:3000',
-        'http://127.0.0.1:3000'
+        'http://127.0.0.1:3000',
+        'http://localhost:5173', // Si vous utilisez Vite en dev
+        'http://localhost:8080'  // Si vous utilisez un autre serveur de dev
     ],
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    allowedHeaders: ['Content-Type', 'Authorization']
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+    optionsSuccessStatus: 200 // Support pour les anciens navigateurs
 }));
 
-app.use(express.json());
+// IMPORTANT: Ajouter le middleware pour gérer les requêtes OPTIONS
+app.options('*', cors());
+
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(logRequest);
+
+// Trust proxy (important pour Render)
+app.set('trust proxy', 1);
 
 // Servir les fichiers statiques
 app.use(express.static(path.join(__dirname, 'public')));
@@ -58,11 +69,12 @@ app.get('/api/health', (req, res) => {
     res.json({ 
         status: 'OK', 
         timestamp: new Date().toISOString(),
-        environment: process.env.NODE_ENV || 'development'
+        environment: process.env.NODE_ENV || 'development',
+        cors: 'enabled'
     });
 });
 
-// Route pour servir les pages HTML
+// Routes pour servir les pages HTML (si vous les servez depuis le backend)
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
@@ -95,6 +107,7 @@ app.use('*', (req, res) => {
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Serveur QVSLV lancé sur le port ${PORT}`);
     console.log(`📡 URL: ${process.env.NODE_ENV === 'production' ? 'https://qvslv-site.onrender.com' : `http://localhost:${PORT}`}`);
+    console.log(`🌐 CORS activé pour Vercel: https://qvslv-site-front.vercel.app`);
 });
 
 // Gestion propre de l'arrêt

@@ -45,6 +45,38 @@ router.post('/register', async (req, res) => {
             });
         }
 
+        // Validation de l'email
+        const emailRegex = /^\w+([.-]?\w+)*@\w+([.-]?\w+)*(\.\w{2,3})+$/;
+        if (!emailRegex.test(email)) {
+            logAuthActivity('REGISTRATION_FAILED', req, { 
+                reason: 'Email invalide' 
+            });
+            return res.status(400).json({
+                error: 'Format d\'email invalide.'
+            });
+        }
+
+        // Validation du mot de passe
+        if (password.length < 6) {
+            logAuthActivity('REGISTRATION_FAILED', req, { 
+                reason: 'Mot de passe trop court' 
+            });
+            return res.status(400).json({
+                error: 'Le mot de passe doit contenir au moins 6 caractères.'
+            });
+        }
+
+        // Validation de la spécialisation
+        const validSpecializations = ['archives', 'ancient', 'social', 'tech', 'consciousness', 'symbols', 'crypto', 'research'];
+        if (!validSpecializations.includes(specialization)) {
+            logAuthActivity('REGISTRATION_FAILED', req, { 
+                reason: 'Spécialisation invalide' 
+            });
+            return res.status(400).json({
+                error: 'Domaine de spécialisation invalide.'
+            });
+        }
+
         // Vérifier si email ou nom de code déjà utilisé
         const existingUser = await User.findOne({
             $or: [{ email }, { username }]
@@ -55,8 +87,13 @@ router.post('/register', async (req, res) => {
                 reason: 'Email ou username déjà utilisé',
                 conflictField: existingUser.email === email ? 'email' : 'username'
             });
+            
+            const conflictMessage = existingUser.email === email 
+                ? 'Cette adresse email est déjà utilisée.' 
+                : 'Ce nom de code est déjà pris.';
+                
             return res.status(400).json({
-                error: 'Email ou nom de code déjà utilisé.'
+                error: conflictMessage
             });
         }
 
@@ -65,13 +102,14 @@ router.post('/register', async (req, res) => {
 
         // Création et sauvegarde du nouvel utilisateur
         const newUser = new User({
-            firstName,
-            lastName,
-            username,
-            email,
+            firstName: firstName.trim(),
+            lastName: lastName.trim(),
+            username: username.trim(),
+            email: email.toLowerCase().trim(),
             password: hashedPassword,
             specialization,
-            motivation
+            motivation: motivation.trim(),
+            role: 'VÉRIFIÉ' // Niveau de base après inscription
         });
 
         await newUser.save();
@@ -86,7 +124,10 @@ router.post('/register', async (req, res) => {
             user: {
                 id: newUser._id,
                 username: newUser.username,
-                role: newUser.role
+                firstName: newUser.firstName,
+                lastName: newUser.lastName,
+                role: newUser.role,
+                specialization: newUser.specialization
             }
         });
 
@@ -95,6 +136,14 @@ router.post('/register', async (req, res) => {
             error: err.message 
         });
         console.error('❌ Erreur lors de l\'inscription :', err);
+        
+        // Gestion des erreurs MongoDB spécifiques
+        if (err.code === 11000) {
+            const field = Object.keys(err.keyValue)[0];
+            const message = field === 'email' ? 'Cette adresse email est déjà utilisée.' : 'Ce nom de code est déjà pris.';
+            return res.status(400).json({ error: message });
+        }
+        
         return res.status(500).json({
             error: 'Erreur serveur. Veuillez réessayer plus tard.'
         });
@@ -118,8 +167,11 @@ router.post('/login', async (req, res) => {
             });
         }
 
-        // Chercher l'utilisateur
-        const user = await User.findOne({ username });
+        // Chercher l'utilisateur (insensible à la casse pour le username)
+        const user = await User.findOne({ 
+            username: { $regex: new RegExp('^' + username + '$', 'i') }
+        });
+        
         if (!user) {
             logAuthActivity('LOGIN_FAILED', req, { 
                 reason: 'Utilisateur non trouvé',
@@ -164,14 +216,16 @@ router.post('/login', async (req, res) => {
             { expiresIn: '24h' }
         );
 
-        // Mettre à jour la dernière connexion
+        // Mettre à jour la dernière connexion et incrémenter le compteur
         user.lastLogin = new Date();
+        user.loginCount += 1;
         await user.save();
 
         logAuthActivity('LOGIN_SUCCESS', req, { 
             userId: user._id,
             username: user.username,
-            role: user.role 
+            role: user.role,
+            loginCount: user.loginCount
         });
 
         return res.status(200).json({
@@ -183,7 +237,9 @@ router.post('/login', async (req, res) => {
                 firstName: user.firstName,
                 lastName: user.lastName,
                 role: user.role,
-                specialization: user.specialization
+                specialization: user.specialization,
+                lastLogin: user.lastLogin,
+                loginCount: user.loginCount
             }
         });
 
@@ -211,7 +267,15 @@ router.get('/verify', async (req, res) => {
         const user = await User.findById(decoded.userId).select('-password');
         
         if (!user || !user.isActive) {
-            return res.status(401).json({ error: 'Token invalide' });
+            return res.status(401).json({ error: 'Token invalide ou compte désactivé' });
+        }
+
+        // Vérifier si le token n'est pas trop ancien (optionnel)
+        const tokenAge = Date.now() - (decoded.iat * 1000);
+        const maxAge = 24 * 60 * 60 * 1000; // 24 heures
+        
+        if (tokenAge > maxAge) {
+            return res.status(401).json({ error: 'Token expiré' });
         }
 
         return res.status(200).json({
@@ -221,20 +285,77 @@ router.get('/verify', async (req, res) => {
                 firstName: user.firstName,
                 lastName: user.lastName,
                 role: user.role,
-                specialization: user.specialization
+                specialization: user.specialization,
+                lastLogin: user.lastLogin
             }
         });
 
     } catch (err) {
         console.error('❌ Erreur vérification token :', err);
-        return res.status(401).json({ error: 'Token invalide' });
+        
+        if (err.name === 'JsonWebTokenError') {
+            return res.status(401).json({ error: 'Token invalide' });
+        } else if (err.name === 'TokenExpiredError') {
+            return res.status(401).json({ error: 'Token expiré' });
+        }
+        
+        return res.status(401).json({ error: 'Erreur de validation du token' });
     }
 });
 
 // POST /api/auth/logout
 router.post('/logout', (req, res) => {
-    logAuthActivity('LOGOUT', req);
-    return res.status(200).json({ message: 'Déconnexion réussie' });
+    const token = req.header('Authorization')?.replace('Bearer ', '');
+    
+    logAuthActivity('LOGOUT', req, { 
+        hasToken: !!token 
+    });
+    
+    // Dans une implémentation complète, vous pourriez blacklister le token
+    // ou le stocker dans Redis avec une expiration
+    
+    return res.status(200).json({ 
+        message: 'Déconnexion réussie',
+        timestamp: new Date().toISOString()
+    });
+});
+
+// GET /api/auth/profile - Obtenir le profil utilisateur (protégé)
+router.get('/profile', async (req, res) => {
+    try {
+        const token = req.header('Authorization')?.replace('Bearer ', '');
+        
+        if (!token) {
+            return res.status(401).json({ error: 'Token manquant' });
+        }
+
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || 'qvslv_secret_key_change_in_production');
+        const user = await User.findById(decoded.userId).select('-password');
+        
+        if (!user || !user.isActive) {
+            return res.status(401).json({ error: 'Utilisateur non trouvé' });
+        }
+
+        return res.status(200).json({
+            user: {
+                id: user._id,
+                username: user.username,
+                firstName: user.firstName,
+                lastName: user.lastName,
+                email: user.email,
+                role: user.role,
+                specialization: user.specialization,
+                motivation: user.motivation,
+                lastLogin: user.lastLogin,
+                loginCount: user.loginCount,
+                createdAt: user.createdAt
+            }
+        });
+
+    } catch (err) {
+        console.error('❌ Erreur récupération profil :', err);
+        return res.status(401).json({ error: 'Token invalide' });
+    }
 });
 
 module.exports = router;
