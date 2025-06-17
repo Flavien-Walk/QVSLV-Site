@@ -5,11 +5,22 @@ const User = require('../models/User');
 
 const router = express.Router();
 
-// POST /api/auth/register
+// ✅ REGISTER
 router.post('/register', async (req, res) => {
-    try {
-        const { firstName, lastName, username, email, password, specialization, motivation = '' } = req.body;
+    console.log('[DEBUG] Requête reçue dans /register :', req.body);
 
+    try {
+        const {
+            firstName,
+            lastName,
+            username,
+            email,
+            password,
+            specialization,
+            motivation = ''
+        } = req.body;
+
+        // 🔒 Vérifications basiques
         if (!firstName || !lastName || !username || !email || !password || !specialization) {
             return res.status(400).json({ error: 'Tous les champs obligatoires doivent être remplis.' });
         }
@@ -23,22 +34,34 @@ router.post('/register', async (req, res) => {
             return res.status(400).json({ error: 'Le mot de passe doit contenir au moins 6 caractères.' });
         }
 
-        const validSpecializations = ['archives', 'ancient', 'social', 'tech', 'consciousness', 'symbols', 'crypto', 'research'];
+        const validSpecializations = [
+            'archives', 'ancient', 'social', 'tech', 'consciousness', 'symbols', 'crypto', 'research'
+        ];
         if (!validSpecializations.includes(specialization)) {
             return res.status(400).json({ error: 'Domaine de spécialisation invalide.' });
         }
 
+        // 🧼 Nettoyage des champs
         const cleanUsername = username.trim();
         const cleanEmail = email.toLowerCase().trim();
 
-        const existingUser = await User.findOne({ $or: [{ email: cleanEmail }, { username: cleanUsername }] });
+        // 🔍 Vérifie unicité email / username
+        const existingUser = await User.findOne({
+            $or: [{ email: cleanEmail }, { username: cleanUsername }]
+        });
+
         if (existingUser) {
-            const conflictMessage = existingUser.email === cleanEmail ? 'Cette adresse email est déjà utilisée.' : 'Ce nom de code est déjà pris.';
+            const conflictField = existingUser.email === cleanEmail ? 'email' : 'username';
+            const conflictMessage = conflictField === 'email'
+                ? 'Cette adresse email est déjà utilisée.'
+                : 'Ce nom de code est déjà pris.';
             return res.status(400).json({ error: conflictMessage });
         }
 
+        // 🔐 Hash du mot de passe
         const hashedPassword = await bcrypt.hash(password, 12);
 
+        // 🆕 Création de l'utilisateur
         const newUser = new User({
             firstName: firstName.trim(),
             lastName: lastName.trim(),
@@ -65,25 +88,34 @@ router.post('/register', async (req, res) => {
         });
 
     } catch (err) {
+        // 🔁 Gestion des doublons MongoDB
         if (err.code === 11000) {
             const field = Object.keys(err.keyValue)[0];
-            const message = field === 'email' ? 'Cette adresse email est déjà utilisée.' : 'Ce nom de code est déjà pris.';
+            const message = field === 'email'
+                ? 'Cette adresse email est déjà utilisée.'
+                : 'Ce nom de code est déjà pris.';
             return res.status(400).json({ error: message });
         }
+
+        console.error('[SERVER ERROR] /register :', err);
         return res.status(500).json({ error: 'Erreur serveur. Veuillez réessayer plus tard.' });
     }
 });
 
-// POST /api/auth/login
+// ✅ LOGIN
 router.post('/login', async (req, res) => {
     try {
         const { username, password } = req.body;
+
         if (!username || !password) {
             return res.status(400).json({ error: 'Nom d\'agent et code d\'accès requis.' });
         }
 
         const cleanUsername = username.trim();
-        const user = await User.findOne({ username: { $regex: new RegExp(`^${cleanUsername}$`, 'i') } });
+        const user = await User.findOne({
+            username: { $regex: new RegExp(`^${cleanUsername}$`, 'i') }
+        });
+
         if (!user) {
             return res.status(401).json({ error: 'Identifiants invalides.' });
         }
@@ -98,7 +130,11 @@ router.post('/login', async (req, res) => {
         }
 
         const token = jwt.sign(
-            { userId: user._id, username: user.username, role: user.role },
+            {
+                userId: user._id,
+                username: user.username,
+                role: user.role
+            },
             process.env.JWT_SECRET || 'qvslv_secret_key_change_in_production',
             { expiresIn: '24h' }
         );
@@ -123,6 +159,7 @@ router.post('/login', async (req, res) => {
         });
 
     } catch (err) {
+        console.error('[SERVER ERROR] /login :', err);
         return res.status(500).json({ error: 'Erreur serveur. Veuillez réessayer plus tard.' });
     }
 });
