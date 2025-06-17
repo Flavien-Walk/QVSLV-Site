@@ -98,14 +98,9 @@ router.post('/login', async (req, res) => {
         }
 
         const token = jwt.sign(
-            { 
-                userId: user._id, 
-                username: user.username, 
-                role: user.role,
-                iat: Math.floor(Date.now() / 1000)
-            },
+            { userId: user._id, username: user.username, role: user.role },
             process.env.JWT_SECRET || 'qvslv_secret_key_change_in_production',
-            { expiresIn: '7d' }
+            { expiresIn: '24h' }
         );
 
         user.lastLogin = new Date();
@@ -115,7 +110,6 @@ router.post('/login', async (req, res) => {
         return res.status(200).json({
             message: 'Connexion réussie !',
             token,
-            expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
             user: {
                 id: user._id,
                 username: user.username,
